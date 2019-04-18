@@ -1,0 +1,110 @@
+---
+title: "Building Index Using Principal Component Analysis"
+author: "Harish M"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    highlight: tango
+---
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+library(knitr)
+library(prettydoc)
+library(tidyverse)
+library(gridExtra)
+library(UsingR)
+opts_chunk$set(message = FALSE,
+               warning = FALSE,
+               echo = FALSE, 
+               out.width = "100%",
+               fig.align = "center")
+```
+
+# PCA?
+
+Let's suppose one is trying to rank the students of a class based on the scores of several subjects. The obvious way to go about it would be to calculate average scores. If one score is more important than another, the approach would be to go for a weighted average. A third case would be when the scores of one subject, let's say Math, is widely spread out between 50 to 100%, while all students scored above 90% in Art. In other words, the variance is high. The student with a 100% in Math should be rewarded higher than another with a 100% in Art. This is when Principal Component Analysis can prove useful, by indexing the students based on weight calculated according to the variability in the scores.
+
+```{r}
+math <- seq(60, 100, length.out = 5)
+science <- seq(70, 90, length.out = 5)
+art <- seq(100, 92, length.out = 5)
+lang <- seq(100, 84, length.out = 5)
+
+data.frame(math, science, art, lang) %>% kable()
+```
+
+The principal components of a dataset are essentially linear functions of the original variables. A dataset with $j$ columns will have $j$ principal components. However, the first few components will usually capture a large percentage of the variance in the dataset. Higher the collinearity between the variables, higher will be the variance captured by the first components. PCA serves best when analyzing datasets with large number of correlated variables. The first principal component will explain most of the variance in the data, while the second component will explain the variations that is not explained by the first component.
+
+Going back to the example of ranking students, let's suppose the subjects are Math, Science, Art and Language. It would be fair to assume that students who performed well in Math would also score high in Science; and Art, in Language. Variables are multicollinear. Introducing PCA to the data, component 1 will explain the scores of Math and Science, while component 2 will explain Art and Language. 
+
+Effectively, the dimension of the dataset is brought down from 4 to 2 and multicollinearity is eliminated.
+
+# Eigen Values and Eigen Vectors
+
+As established, the objective of PCA is to capture the variance. This can be achieved by <i>twisting</i> the axes. Let's look at <a href = "https://en.wikipedia.org/wiki/Regression_toward_the_mean"target="_blank">Galton's data</a> studying the relationship between a parent's height and their children. The graph below on the left shows the original data, with the parent's height on the x axis and the child's on the y. The maximum variance in the data is observed along the perpendicular red lines on the data. Switching the axes to these red lines, as show on the right, will thus enable studying the variance better.
+
+```{r fig.height=3}
+galton_pca <- princomp(galton, cor = TRUE) %>% summary(loadings = TRUE, scores = TRUE)
+
+grid.arrange(galton %>% ggplot(aes(parent, child, alpha = 0.3)) + geom_point() +
+               geom_abline(aes(intercept = -1.5, slope = 1.015, col = "red")) +
+               geom_abline(aes(intercept = 130, slope = -0.9, col = "red")) +
+               theme_minimal() + theme(legend.position = "none") +
+               lims(x = c(60, 80), y = c(60, 80)),
+             galton_pca$scores %>% as.data.frame() %>% ggplot(aes(Comp.1, Comp.2, alpha = 0.3)) + 
+               geom_point() + theme_minimal() + geom_hline(yintercept = 0, color = "red") +
+               geom_vline(xintercept = 0, color = "red") + theme(legend.position = "none"),
+             ncol = 2, nrow = 1)
+```
+
+So which direction should the axes move and how much variance will the new origin explain? Eigen Vectors and Eigen values of the covariance matrix answers the two questions respectively. The eigen vector with the highest eigen value will therefore be the first principal component. In the figure above, the horizontal red line will be the first principal component. In datasets with higher dimensions, some information is lost while choosing the first few principal components. But that's the price paid for dimensionality reduction.
+
+# Data to Index
+
+```{r}
+data <- read.table("men_track.txt", header = TRUE)
+colnames(data) <- gsub("X", "m_", colnames(data))
+colnames(data) <- tolower(colnames(data))
+```
+
+The dataset printed below contains the running times of 56 countries on 8 events. The first 5 records are printed.
+
+```{r}
+data %>% head(5) %>% kable(caption = "Olympics - Men's Running Events Times - Sample")
+```
+
+To index these countries, let's first apply PCA. The Eigen Values/the explained variance by each component is printed below.
+
+```{r echo = "show"}
+pca_model <- princomp(data[, -9], cor = TRUE)
+pca_summary <- summary(pca_model, loadings = TRUE, scores = TRUE, cutoff = 0)
+
+eigen_values <- pca_model$sdev^2
+
+pca_model$sdev %>% as.data.frame() %>% rownames_to_column("component") %>% 
+  bind_cols(variance = round(sqrt(eigen_values), 3),
+            proportion_variance = round(eigen_values/sum(eigen_values), 3),
+            cumulative_proportion = round(cumsum(eigen_values)/sum(eigen_values), 3)) %>% 
+  dplyr::select(component, variance, proportion_variance, cumulative_proportion) %>% 
+  kable(caption = "Eigen Values of Principal Component Analysis")
+```
+
+Component 1 explains about ~83% of the variance, while component 1 and 2 explain about ~94%. This is plenty enough. As already explained, each of the components are linear functions of the original variable. Let's take a look at the coefficients of the components.
+
+```{r echo = "show"}
+pca_summary[["loadings"]][1:8, 1:8] %>% t() %>% round(3) %>% as.data.frame() %>%
+  kable(caption = "Coefficients of Principal Components")
+```
+
+Component 1 is essentially a weighted average of all 8 races that explains ~83% of the variance in the data. Component 2 however, get's interesting. Shorter races have a positive coefficient, while longer races are negative. Thus it acts as a representation of countries' performances in shorter/longer races. Bringing down the number of dimension thus eliminates the correlation between the columns.
+
+To get the equivalent scores, data must be standardized and multipled to the coefficients. The first five records, sorted by the component has been printed. 
+
+```{r echo = "show"}
+data %>% dplyr::select("country") %>% 
+  bind_cols(pca_summary$scores %>% as.data.frame() %>% round(3)) %>% 
+  arrange(Comp.1) %>% 
+  head(5) %>% kable(caption = "Principal Component Equivalents")
+```
+
+USA has the lowest value for component 1(shorter times are better) and hence ranks first. If one were to use the 8 columns of running times as variables in other processes such as a linear regression, they could instead just opt to use the first few principal component. 
